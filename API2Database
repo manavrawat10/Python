@@ -1,0 +1,112 @@
+"""
+Created on Mon Feb 19 22:39:39 2018
+
+@author: Manvenddra(599798)
+"""
+import xmltodict
+import requests
+import pyodbc
+import time
+import datetime
+
+#this function will append a log file to stroe all the logs.
+def createlogfile():
+    logfile=open("D:\\Poc\\mylog.log","a")
+    return logfile
+
+#This function will use cursor to insert the query which is been passed to this function
+def insertValues(query,cursor):
+    cursor.execute(query)
+
+#This is to create ODBC connection for MSSQL
+def createConnection():
+    try:
+        cnxn = pyodbc.connect('DRIVER={SQL Server};SERVER=odsrds.cknqaqksjogl.us-east-1.rds.amazonaws.com;DATABASE=ODS_DEV;UID=dbadmin;PWD=weDjh4#dg')
+        #print("Connected")
+        return cnxn
+    except:
+        print("Error in connection")
+
+#This will write the log in the same file which we have opened in the first function function
+def log(message,severity,filename):
+    if severity=="":
+        filename.write("%s\n"%(message))
+    else:
+        filename.write(str(datetime.datetime.now()) +"    %s    %s \n"%(severity,message))
+
+#This function get the data using API using requests library and convert the json data to dictonary. DIctonary is a key value pair data example: {'name':'Manvenddra', 'Age':'25'}
+def getAPIdata(api):
+    res = requests.get(api)
+    dom=res.text
+    #converted json data to dictonary
+    doc = xmltodict.parse(dom)
+    return doc
+
+#this function will extract data so that we can store it in database .
+def processingData(doc, cursor):
+    reportdatee=doc['dashboardreport']['@reportdate'] # this will get the value of report date from dictonary
+    appType=doc['dashboardreport']['@name'] # this will store application name 
+    print(reportdate)
+    metric_name=charts[ch]['@name']
+    print("******************metric name:- %s **********"%(metric_name))
+   if 'measure' in charts[ch]['measures']:
+       applsplit=charts[ch]['measures']['measure']['@measure']
+       print(applsplit)
+       server=len(charts[ch]['measures']['measure']['measure'])
+       table=charts[ch]['measures']['measure']['measure']
+       if 'measurement' in table:
+           applname=table['@measure']
+           unit=table['@unit']
+           ct=len(table['measurement'])
+            
+           for j in range(ct):
+                date=float(table['measurement'][j]['@timestamp'])/1000
+                date=time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(date))
+                avg=table['measurement'][j]['@avg']
+                minimum=table['measurement'][j]['@min']
+                maximum=table['measurement'][j]['@max']
+                #summation=table['measurement'][j]['@sum']
+                count=table['measurement'][j]['@count']
+                query="insert into ods_dynatrace_app_perf_txn(app_name,app_type,max_value,min_value,avg_value,count,metric,metric_uom,recorded_at,inserted_at,inserted_by) values('"
+                query=query+applname+"','"+appType+"',"+maximum+","+minimum+","+avg+","+count+",'"+metric_name+"','"+unit+"',"+date+","+reportdate+",'Python')"
+                insertValues(query,cursor)
+        return
+        
+# this fucntion will coordinate with other functions to perform the execution.
+def processAPI(api,cursor):
+    
+    #calling API function to get the data in dictonary data structure
+    try:
+        
+        doc=getAPIdata(api)
+        print(doc)
+    except Exception as e:
+        log("Error Occurred with API. " + str(e), "ERROR", file)
+        
+    # this function will extract the values using the above returned dictonary (doc)
+    try:
+        processingData(doc, cursor)
+        log("Completed update .", "INFO:",file)
+        
+    except Exception as e:
+        log("Error Occurred while processing data. " + str(e), "ERROR", file)
+        
+
+#**************************script starts from here *************************************
+file=createlogfile()
+
+# create a connection with MSSQL using ODBC
+try:
+    cnxn=createConnection()
+    cursor=cnxn.cursor()
+    log("Connection created", "INFO:", file)
+except Exception as e:
+    log("Error Occurred while creating connection. " + str(e), "ERROR", file)
+    
+    
+api="http://<host IP>:<PORT>/rest/management/reports/create/Middle%20Application%20Server?filter=tf:Last1h&type=XML"
+processAPI(api,cursor)
+log("=================================================================================================================","",file)
+cnxn.commit() #commit database to store data in db
+file.close() # close file 
+cnxn.close() # close connection
